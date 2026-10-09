@@ -2,14 +2,14 @@ pipeline {
     agent any
     
     environment {
-        // AWS & ECR Configuration - REPLACE THESE VALUES
-        AWS_ACCOUNT_ID = '017161968499' // Your AWS Account ID
+        // AWS & ECR Configuration (REPLACE THESE VALUES)
+        AWS_ACCOUNT_ID = '017161968499' 
         AWS_REGION = 'ap-south-1'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         ECR_BACKEND_REPO = 'nestnet-backend'
         ECR_FRONTEND_REPO = 'nestnet-frontend'
         
-        // EKS Configuration - REPLACE WITH YOUR CLUSTER NAME
+        // EKS Configuration (REPLACE WITH YOUR CLUSTER NAME)
         EKS_CLUSTER_NAME = 'nestnet-cluster'
         
         IMAGE_TAG = "${BUILD_NUMBER}"
@@ -46,15 +46,20 @@ pipeline {
                 script {
                     def sqToken = sh(script: 'cat sq_token.txt', returnStdout: true).trim()
                     
+                    // Run sonar-scanner via Docker to avoid host installation issues
                     sh """
-                        sonar-scanner \
-                          -Dsonar.projectKey=NestNet \
-                          -Dsonar.sources=backend,frontend \
-                          -Dsonar.host.url=http://localhost:9000 \
+                        docker run --rm \\
+                          --network host \\
+                          -v \$(pwd):/usr/src \\
+                          sonarsource/sonar-scanner-cli:latest \\
+                          -Dsonar.projectKey=NestNet \\
+                          -Dsonar.sources=backend,frontend \\
+                          -Dsonar.host.url=http://localhost:9000 \\
                           -Dsonar.token=${sqToken}
                     """
                 }
                 
+                // Software Composition Analysis
                 dir('backend') { sh 'npm audit --audit-level=high || true' }
                 dir('frontend') { sh 'npm audit --audit-level=high || true' }
             }
@@ -105,7 +110,7 @@ pipeline {
                     '''
                     
                     sh '''
-                        docker run --rm --network host -v $(pwd):/zap/wrk/ -t owasp/zap2docker-stable zap-baseline.py \
+                        docker run --rm --network host -v $(pwd):/zap/wrk/ -t owasp/zap2docker-stable zap-baseline.py \\
                         -t http://localhost:8080 -r zap_report.html || true
                     '''
                     
