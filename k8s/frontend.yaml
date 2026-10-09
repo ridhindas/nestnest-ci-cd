@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nestnet-frontend
+  namespace: production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nestnet-frontend
+  template:
+    metadata:
+      labels:
+        app: nestnet-frontend
+    spec:
+      containers:
+      - name: nestnet-frontend
+        image: 017161968499.dkr.ecr.ap-south-1.amazonaws.com/nestnet-frontend:latest
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nestnet-frontend-svc
+  namespace: production
+spec:
+  selector:
+    app: nestnet-frontend
+  ports:
+  - port: 80
+    targetPort: 80

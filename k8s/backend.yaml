@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nestnet-backend
+  namespace: production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nestnet-backend
+  template:
+    metadata:
+      labels:
+        app: nestnet-backend
+    spec:
+      containers:
+      - name: nestnet-backend
+        image: 017161968499.dkr.ecr.ap-south-1.amazonaws.com/nestnet-backend:latest
+        ports:
+        - containerPort: 5000
+        env:
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: nestnet-secrets
+              key: mongo-uri
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nestnet-backend-svc
+  namespace: production
+spec:
+  selector:
+    app: nestnet-backend
+  ports:
+  - port: 5000
+    targetPort: 5000
