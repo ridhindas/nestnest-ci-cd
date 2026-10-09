@@ -130,24 +130,29 @@ pipeline {
         stage('Local DAST (OWASP ZAP)') {
             steps {
                 script {
-                    // FIX: Aggressive cleanup of previous failed runs to free port 8080
                     sh '''
-                        echo "Cleaning up any leftover DAST containers from previous runs..."
+                        echo "Aggressively cleaning up leftover DAST containers and freeing ports..."
                         docker stop dast-backend dast-frontend || true
                         docker rm -f dast-backend dast-frontend || true
                         docker network rm nestnet-dast-net || true
                         
+                        # Force kill any hidden process holding ports 8080 or 8081
+                        fuser -k 8080/tcp || true
+                        fuser -k 8081/tcp || true
+                        
                         docker network create nestnet-dast-net || true
                         docker run -d --name dast-backend --network nestnet-dast-net ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}
                         sleep 10 
-                        docker run -d --name dast-frontend --network nestnet-dast-net -p 8080:80 ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}
+                        
+                        # CHANGED: Use port 8081 to avoid conflicts with Jenkins (which often uses 8080)
+                        docker run -d --name dast-frontend --network nestnet-dast-net -p 8081:80 ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}
                         sleep 10
                     '''
                     
                     echo "Running OWASP ZAP DAST Scan (Generating HTML Report)..."
                     sh '''
                         docker run --rm --network host -v $(pwd):/zap/wrk/ -t owasp/zap2docker-stable zap-baseline.py \\
-                        -t http://localhost:8080 -r zap_report.html || true
+                        -t http://localhost:8081 -r zap_report.html || true
                     '''
                     
                     sh '''
