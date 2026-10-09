@@ -131,20 +131,18 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        echo "Aggressively cleaning up leftover DAST containers and freeing ports..."
+                        echo "Cleaning up any leftover DAST containers..."
                         docker stop dast-backend dast-frontend || true
                         docker rm -f dast-backend dast-frontend || true
                         docker network rm nestnet-dast-net || true
                         
-                        # Force kill any hidden process holding ports 8080 or 8081
-                        fuser -k 8080/tcp || true
-                        fuser -k 8081/tcp || true
-                        
                         docker network create nestnet-dast-net || true
+                        
+                        echo "Starting backend container for DAST..."
                         docker run -d --name dast-backend --network nestnet-dast-net ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}
                         sleep 10 
                         
-                        # CHANGED: Use port 8081 to avoid conflicts with Jenkins (which often uses 8080)
+                        echo "Starting frontend container for DAST on port 8081..."
                         docker run -d --name dast-frontend --network nestnet-dast-net -p 8081:80 ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}
                         sleep 10
                     '''
