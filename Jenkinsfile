@@ -9,7 +9,7 @@ pipeline {
         ECR_BACKEND_REPO = 'nestnet-backend'
         ECR_FRONTEND_REPO = 'nestnet-frontend'
         
-        // EKS Configuration (UPDATED)
+        // EKS Configuration
         EKS_CLUSTER_NAME = 'nestnet-cluster'
         
         IMAGE_TAG = "${BUILD_NUMBER}"
@@ -104,7 +104,9 @@ pipeline {
                           aquasec/trivy:latest image \\
                           --severity HIGH,CRITICAL \\
                           --ignore-unfixed \\
-                          -f html -o /reports/trivy-backend-report.html \\
+                          --format template \\
+                          --template "@contrib/html.tpl" \\
+                          -o /reports/trivy-backend-report.html \\
                           ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG} || true
                     """
                     
@@ -116,7 +118,9 @@ pipeline {
                           aquasec/trivy:latest image \\
                           --severity HIGH,CRITICAL \\
                           --ignore-unfixed \\
-                          -f html -o /reports/trivy-frontend-report.html \\
+                          --format template \\
+                          --template "@contrib/html.tpl" \\
+                          -o /reports/trivy-frontend-report.html \\
                           ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG} || true
                     """
                 }
@@ -126,7 +130,13 @@ pipeline {
         stage('Local DAST (OWASP ZAP)') {
             steps {
                 script {
+                    // FIX: Aggressive cleanup of previous failed runs to free port 8080
                     sh '''
+                        echo "Cleaning up any leftover DAST containers from previous runs..."
+                        docker stop dast-backend dast-frontend || true
+                        docker rm -f dast-backend dast-frontend || true
+                        docker network rm nestnet-dast-net || true
+                        
                         docker network create nestnet-dast-net || true
                         docker run -d --name dast-backend --network nestnet-dast-net ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}
                         sleep 10 
@@ -141,8 +151,9 @@ pipeline {
                     '''
                     
                     sh '''
+                        echo "Cleaning up DAST containers..."
                         docker stop dast-backend dast-frontend || true
-                        docker rm dast-backend dast-frontend || true
+                        docker rm -f dast-backend dast-frontend || true
                         docker network rm nestnet-dast-net || true
                     '''
                 }
