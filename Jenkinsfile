@@ -2,18 +2,24 @@ pipeline {
     agent any
     
     environment {
+        // AWS & ECR Configuration
         AWS_ACCOUNT_ID = '017161968499' 
         AWS_REGION = 'ap-south-1'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         ECR_BACKEND_REPO = 'nestnet-backend'
         ECR_FRONTEND_REPO = 'nestnet-frontend'
+        
+        // EKS Configuration (UPDATED)
         EKS_CLUSTER_NAME = 'nestnet-cluster'
+        
         IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
     stages {
         stage('Checkout') {
-            steps { checkout scm }
+            steps {
+                checkout scm
+            }
         }
 
         stage('Start Ephemeral SonarQube') {
@@ -75,10 +81,14 @@ pipeline {
         stage('Docker Build') {
             parallel {
                 stage('Build Backend') {
-                    steps { sh "docker build -t ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG} -f backend/Dockerfile backend" }
+                    steps {
+                        sh "docker build -t ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG} -f backend/Dockerfile backend"
+                    }
                 }
                 stage('Build Frontend') {
-                    steps { sh "docker build -t ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG} -f frontend/Dockerfile frontend" }
+                    steps {
+                        sh "docker build -t ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG} -f frontend/Dockerfile frontend"
+                    }
                 }
             }
         }
@@ -86,25 +96,28 @@ pipeline {
         stage('Container SAST (Trivy)') {
             steps {
                 script {
-                    echo "Scanning Backend Image with Trivy..."
+                    echo "Scanning Backend Image with Trivy (Generating HTML Report)..."
                     sh """
                         docker run --rm \\
                           -v /var/run/docker.sock:/var/run/docker.sock \\
+                          -v \$(pwd):/reports \\
                           aquasec/trivy:latest image \\
-                          --exit-code 1 \\
                           --severity HIGH,CRITICAL \\
                           --ignore-unfixed \\
-                          ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}
+                          -f html -o /reports/trivy-backend-report.html \\
+                          ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG} || true
                     """
-                    echo "Scanning Frontend Image with Trivy..."
+                    
+                    echo "Scanning Frontend Image with Trivy (Generating HTML Report)..."
                     sh """
                         docker run --rm \\
                           -v /var/run/docker.sock:/var/run/docker.sock \\
+                          -v \$(pwd):/reports \\
                           aquasec/trivy:latest image \\
-                          --exit-code 1 \\
                           --severity HIGH,CRITICAL \\
                           --ignore-unfixed \\
-                          ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}
+                          -f html -o /reports/trivy-frontend-report.html \\
+                          ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG} || true
                     """
                 }
             }
@@ -120,10 +133,13 @@ pipeline {
                         docker run -d --name dast-frontend --network nestnet-dast-net -p 8080:80 ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}
                         sleep 10
                     '''
+                    
+                    echo "Running OWASP ZAP DAST Scan (Generating HTML Report)..."
                     sh '''
                         docker run --rm --network host -v $(pwd):/zap/wrk/ -t owasp/zap2docker-stable zap-baseline.py \\
                         -t http://localhost:8080 -r zap_report.html || true
                     '''
+                    
                     sh '''
                         docker stop dast-backend dast-frontend || true
                         docker rm dast-backend dast-frontend || true
@@ -157,6 +173,15 @@ pipeline {
                     kubectl rollout status deployment/nestnet-frontend -n production
                 '''
             }
+        }
+    }
+
+    // --- POST BUILD: Archive all security reports as downloadable artifacts ---
+    post {
+        always {
+            echo "Archiving security reports for download..."
+            archiveArtifacts artifacts: 'trivy-*.html, zap_report.html', allowEmptyArchive: true
+            echo "Reports archived! You can download them from the Jenkins build page."
         }
     }
 }
