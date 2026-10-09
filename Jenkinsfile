@@ -2,14 +2,14 @@ pipeline {
     agent any
     
     environment {
-        // AWS & ECR Configuration (UPDATED WITH YOUR DETAILS)
+        // AWS & ECR Configuration
         AWS_ACCOUNT_ID = '017161968499' 
         AWS_REGION = 'ap-south-1'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         ECR_BACKEND_REPO = 'nestnet-backend'
         ECR_FRONTEND_REPO = 'nestnet-frontend'
         
-        // EKS Configuration (REPLACE 'YOUR_CLUSTER_NAME_HERE' WITH YOUR ACTUAL CLUSTER NAME)
+        // EKS Configuration (REPLACE WITH YOUR ACTUAL CLUSTER NAME)
         EKS_CLUSTER_NAME = 'nestnet-cluster'
         
         IMAGE_TAG = "${BUILD_NUMBER}"
@@ -35,7 +35,6 @@ pipeline {
                     done
                     echo "SonarQube is UP!"
                     
-                    # Generate token and strictly validate it
                     SQ_RESPONSE=$(curl -s -u admin:admin -X POST "http://localhost:9000/api/user_tokens/generate" -d "name=ci-pipeline")
                     SQ_TOKEN=$(echo "$SQ_RESPONSE" | jq -r '.token' | tr -d '\\n\\r\\t ')
                     
@@ -54,7 +53,6 @@ pipeline {
             steps {
                 script {
                     def sqToken = sh(script: 'cat sq_token.txt | tr -d "\\n\\r\\t "', returnStdout: true).trim()
-                    
                     echo "SonarQube Token extracted (Length: ${sqToken.length()}): ${sqToken.take(10)}..."
                     
                     sh """
@@ -101,10 +99,30 @@ pipeline {
             }
         }
 
+        // --- FIXED: Trivy now runs inside Docker ---
         stage('Container SAST (Trivy)') {
             steps {
-                sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}"
-                sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}"
+                script {
+                    echo "Scanning Backend Image with Trivy..."
+                    sh """
+                        docker run --rm \\
+                          -v /var/run/docker.sock:/var/run/docker.sock \\
+                          aquasec/trivy:latest image \\
+                          --exit-code 1 \\
+                          --severity HIGH,CRITICAL \\
+                          ${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}
+                    """
+                    
+                    echo "Scanning Frontend Image with Trivy..."
+                    sh """
+                        docker run --rm \\
+                          -v /var/run/docker.sock:/var/run/docker.sock \\
+                          aquasec/trivy:latest image \\
+                          --exit-code 1 \\
+                          --severity HIGH,CRITICAL \\
+                          ${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}
+                    """
+                }
             }
         }
 
