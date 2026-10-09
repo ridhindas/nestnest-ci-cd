@@ -2,14 +2,14 @@ pipeline {
     agent any
     
     environment {
-        // AWS & ECR Configuration (REPLACE THESE VALUES)
-        AWS_ACCOUNT_ID = 'i017161968499' 
+        // AWS & ECR Configuration (UPDATED WITH YOUR DETAILS)
+        AWS_ACCOUNT_ID = '017161968499' 
         AWS_REGION = 'ap-south-1'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         ECR_BACKEND_REPO = 'nestnet-backend'
         ECR_FRONTEND_REPO = 'nestnet-frontend'
         
-        // EKS Configuration (REPLACE WITH YOUR CLUSTER NAME)
+        // EKS Configuration (REPLACE 'YOUR_CLUSTER_NAME_HERE' WITH YOUR ACTUAL CLUSTER NAME)
         EKS_CLUSTER_NAME = 'nestnet-cluster'
         
         IMAGE_TAG = "${BUILD_NUMBER}"
@@ -35,8 +35,17 @@ pipeline {
                     done
                     echo "SonarQube is UP!"
                     
-                    SQ_TOKEN=$(curl -s -u admin:admin -X POST "http://localhost:9000/api/user_tokens/generate" -d "name=ci-pipeline" | jq -r '.token' | tr -d '\\n\\r')
+                    # Generate token and strictly validate it
+                    SQ_RESPONSE=$(curl -s -u admin:admin -X POST "http://localhost:9000/api/user_tokens/generate" -d "name=ci-pipeline")
+                    SQ_TOKEN=$(echo "$SQ_RESPONSE" | jq -r '.token' | tr -d '\\n\\r\\t ')
+                    
+                    if [ "$SQ_TOKEN" = "null" ] || [ -z "$SQ_TOKEN" ] || [ ${#SQ_TOKEN} -lt 10 ]; then
+                        echo "ERROR: Failed to generate token. SonarQube response: $SQ_RESPONSE"
+                        exit 1
+                    fi
+                    
                     echo "$SQ_TOKEN" > sq_token.txt
+                    echo "Token generated successfully."
                 '''
             }
         }
@@ -44,35 +53,23 @@ pipeline {
         stage('Source SAST & SCA') {
             steps {
                 script {
-                    // Read and strictly trim the token
-                    def sqToken = sh(
-                        script: 'cat sq_token.txt | tr -d "\\n\\r"',
-                        returnStdout: true
-                    ).trim()
+                    def sqToken = sh(script: 'cat sq_token.txt | tr -d "\\n\\r\\t "', returnStdout: true).trim()
                     
                     echo "SonarQube Token extracted (Length: ${sqToken.length()}): ${sqToken.take(10)}..."
                     
-                    // Fail fast if token generation silently failed (e.g., returned "null")
-                    if (sqToken == "null" || sqToken.isEmpty()) {
-                        error("Failed to generate SonarQube token. The API may have rejected 'admin:admin'. Check SonarQube logs.")
-                    }
-                    
-                    // Run sonar-scanner via Docker with pinned stable version and dual auth flags
                     sh """
                         docker run --rm \\
                           --network host \\
                           -v \$(pwd):/usr/src \\
-                          sonarsource/sonar-scanner-cli:6.2.1 \\
+                          sonarsource/sonar-scanner-cli:latest \\
                           -Dsonar.projectKey=NestNet \\
                           -Dsonar.sources=backend,frontend \\
                           -Dsonar.host.url=http://localhost:9000 \\
                           -Dsonar.token=${sqToken} \\
-                          -Dsonar.login=${sqToken} \\
-                          -Dsonar.verbose=true
+                          -Dsonar.login=${sqToken}
                     """
                 }
                 
-                // Software Composition Analysis
                 dir('backend') { sh 'npm audit --audit-level=high || true' }
                 dir('frontend') { sh 'npm audit --audit-level=high || true' }
             }
@@ -82,9 +79,9 @@ pipeline {
             steps {
                 sh '''
                     echo "Stopping and removing SonarQube container..."
-                    docker stop sonarqube-ci
-                    docker rm sonarqube-ci
-                    rm -f sq_token.txt
+                    docker stop sonarqube-ci || true
+                    docker rm sonarqube-ci || true
+                    rm -f sq_token.txt || true
                 '''
             }
         }
