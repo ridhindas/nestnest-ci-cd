@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         // AWS & ECR Configuration (REPLACE THESE VALUES)
-        AWS_ACCOUNT_ID = '017161968499' 
+        AWS_ACCOUNT_ID = 'i017161968499' 
         AWS_REGION = 'ap-south-1'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         ECR_BACKEND_REPO = 'nestnet-backend'
@@ -35,8 +35,8 @@ pipeline {
                     done
                     echo "SonarQube is UP!"
                     
-                    SQ_TOKEN=$(curl -s -u admin:admin -X POST "http://localhost:9000/api/user_tokens/generate" -d "name=ci-pipeline" | jq -r '.token')
-                    echo $SQ_TOKEN > sq_token.txt
+                    SQ_TOKEN=$(curl -s -u admin:admin -X POST "http://localhost:9000/api/user_tokens/generate" -d "name=ci-pipeline" | jq -r '.token' | tr -d '\\n\\r')
+                    echo "$SQ_TOKEN" > sq_token.txt
                 '''
             }
         }
@@ -44,18 +44,31 @@ pipeline {
         stage('Source SAST & SCA') {
             steps {
                 script {
-                    def sqToken = sh(script: 'cat sq_token.txt', returnStdout: true).trim()
+                    // Read and strictly trim the token
+                    def sqToken = sh(
+                        script: 'cat sq_token.txt | tr -d "\\n\\r"',
+                        returnStdout: true
+                    ).trim()
                     
-                    // Run sonar-scanner via Docker to avoid host installation issues
+                    echo "SonarQube Token extracted (Length: ${sqToken.length()}): ${sqToken.take(10)}..."
+                    
+                    // Fail fast if token generation silently failed (e.g., returned "null")
+                    if (sqToken == "null" || sqToken.isEmpty()) {
+                        error("Failed to generate SonarQube token. The API may have rejected 'admin:admin'. Check SonarQube logs.")
+                    }
+                    
+                    // Run sonar-scanner via Docker with pinned stable version and dual auth flags
                     sh """
                         docker run --rm \\
                           --network host \\
                           -v \$(pwd):/usr/src \\
-                          sonarsource/sonar-scanner-cli:latest \\
+                          sonarsource/sonar-scanner-cli:6.2.1 \\
                           -Dsonar.projectKey=NestNet \\
                           -Dsonar.sources=backend,frontend \\
                           -Dsonar.host.url=http://localhost:9000 \\
-                          -Dsonar.token=${sqToken}
+                          -Dsonar.token=${sqToken} \\
+                          -Dsonar.login=${sqToken} \\
+                          -Dsonar.verbose=true
                     """
                 }
                 
